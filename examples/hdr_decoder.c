@@ -10,7 +10,8 @@
 #include <time.h>
 #include <errno.h>
 #include <string.h>
- 
+#include <malloc.h>
+
 #include <hdr_histogram.h>
 #include <hdr_histogram_log.h>
 
@@ -18,6 +19,32 @@
 #pragma warning(push)
 #pragma warning(disable: 4996)
 #endif
+
+static int
+single_log_decode(FILE *f, struct hdr_histogram **h)
+{
+	char	histobuf[64*1024];
+	char	*cp;
+	int	buflen;
+	int	rc;
+
+	cp = fgets(histobuf, sizeof(histobuf), f);
+	if (cp == NULL)
+		return -1;
+
+	buflen = strlen(histobuf);
+	if (histobuf[buflen-1] == '\n')
+		histobuf[--buflen] = '\0';
+
+	rc = hdr_log_decode(h, histobuf, buflen);
+	if (rc < 0) {
+		fprintf(stderr, "failed to decode single log entry: %s\n", hdr_strerror(rc));
+	} else {
+		hdr_percentiles_print(*h, stdout, 5, 1.0, CLASSIC);
+		free(*h);
+	}
+	return rc;
+}
 
 int main(int argc, char** argv)
 {
@@ -54,7 +81,10 @@ int main(int argc, char** argv)
     if(rc)
     {
         fprintf(stderr, "Failed to read header: %s\n", hdr_strerror(rc));
-        return -1;
+
+	/* try single hdr_log_decode */
+	rc = single_log_decode(f, &h);
+	goto out;
     }
 
     while (true)
@@ -64,6 +94,7 @@ int main(int argc, char** argv)
         if (0 == rc)
         {
             hdr_percentiles_print(h, stdout, 5, 1.0, CLASSIC);
+	    free(h);
         }
         else if (EOF == rc)
         {
@@ -73,8 +104,12 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "Failed to print histogram: %s\n", hdr_strerror(rc));
             return -1;
-        }        
+        }
     }
+
+out:
+    if (f != stdin)
+    	fclose(f);
 
     return 0;
 }
